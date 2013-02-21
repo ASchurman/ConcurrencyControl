@@ -1,0 +1,6 @@
+ConcurrencyControl
+==================
+
+This repository, created for Yale University's CPSC 438 course, is an exercise
+in understanding the concurrency control schemes used in DBMSs. The assignment
+description is found in assignment.txt.
