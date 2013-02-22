@@ -7,6 +7,8 @@
 #include "txn/lock_manager.h"
 #include <algorithm>
 
+using std::find;
+
 ////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////// Helper Functions /////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -31,8 +33,9 @@ static inline void DecrementWait(Txn* txn,
   if ((*waits)[txn] == 1) {
     waits->erase(txn);
     readys->push_back(txn);
-  } else
+  } else {
     (*waits)[txn]--;
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -96,7 +99,7 @@ void LockManager::Release(Txn* txn, const Key& key) {
   // Invalidate txn's entry in txn_waits_ if it exists
   if (txn_waits_.count(txn) > 0)
     txn_waits_.erase(txn);
-  
+
   // Remove txn's LockRequest from the queue of locks on key
   locks->erase(txn_request);
 
@@ -106,7 +109,7 @@ void LockManager::Release(Txn* txn, const Key& key) {
   if (Status(key, &newOwners) != UNLOCKED) {
     for (vector<Txn*>::iterator newIt = newOwners.begin();
          newIt != newOwners.end(); newIt++) {
-      if (std::find(owners.begin(), owners.end(), *newIt) == owners.end())
+      if (find(owners.begin(), owners.end(), *newIt) == owners.end())
         DecrementWait(*newIt, &txn_waits_, ready_txns_);
     }
   }
@@ -158,7 +161,7 @@ bool LockManagerB::ReadLock(Txn* txn, const Key& key) {
   // We just pushed a new LockRequest, so key shouldn't be unlocked.
   DCHECK(mode != UNLOCKED);
 
-  if (std::find(owners.begin(), owners.end(), txn) == owners.end()) {
+  if (find(owners.begin(), owners.end(), txn) == owners.end()) {
     // Our txn did not get a lock
     IncrementWait(txn, &txn_waits_);
     return false;
