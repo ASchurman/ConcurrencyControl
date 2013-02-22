@@ -5,6 +5,7 @@
 // 'The Case for Determinism in Database Systems'.
 
 #include "txn/lock_manager.h"
+#include <algorithm>
 
 ////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////// Helper Functions /////////////////////////////////
@@ -99,13 +100,15 @@ void LockManager::Release(Txn* txn, const Key& key) {
   // Remove txn's LockRequest from the queue of locks on key
   locks->erase(txn_request);
 
-  // If txn was the only owner of a lock, grant a lock to the next group of
-  // transactions in the queue.
-  if (owners.size() == 1 && owners[0] == txn) {
-    Status(key, &owners); // new status after removing txn
-    for (vector<Txn*>::iterator i = owners.begin();
-         i != owners.end(); i++)
-      DecrementWait(*i, &txn_waits_, ready_txns_);
+  // See if we need to issue new locks. Every current owner who was not an
+  // owner before we released txn needs to be issued a lock.
+  vector<Txn*> newOwners;
+  if (Status(key, &newOwners) != UNLOCKED) {
+    for (vector<Txn*>::iterator newIt = newOwners.begin();
+         newIt != newOwners.end(); newIt++) {
+      if (std::find(owners.begin(), owners.end(), *newIt) == owners.end())
+        DecrementWait(*newIt, &txn_waits_, ready_txns_);
+    }
   }
 }
 
@@ -145,9 +148,23 @@ LockManagerB::LockManagerB(deque<Txn*>* ready_txns) {
 }
 
 bool LockManagerB::ReadLock(Txn* txn, const Key& key) {
-  // CPSC 438/538:
-  //
-  // Implement this method!
-  return true;
+  if (!lock_table_[key])
+    lock_table_[key] = new deque<LockRequest>();
+  lock_table_[key]->push_back(LockRequest(SHARED, txn));
+
+  vector<Txn*> owners;
+  LockMode mode = Status(key, &owners);
+
+  // We just pushed a new LockRequest, so key shouldn't be unlocked.
+  DCHECK(mode != UNLOCKED);
+
+  if (std::find(owners.begin(), owners.end(), txn) == owners.end()) {
+    // Our txn did not get a lock
+    IncrementWait(txn, &txn_waits_);
+    return false;
+  } else {
+    // Our txn got a lock
+    return true;
+  }
 }
 
