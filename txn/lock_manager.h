@@ -1,4 +1,5 @@
-// Author: Alexander Thomson (thomson@cs.yale.edu)
+// Original Author: Alexander Thomson (thomson@cs.yale.edu)
+// Minor changes made by Alexander Schurman (alexander.schurman@yale.edu)
 //
 // Interface for lock managers in the system.
 
@@ -29,7 +30,7 @@ enum LockMode {
 
 class LockManager {
  public:
-  virtual ~LockManager() {}
+  virtual ~LockManager();
 
   // Attempts to grant a read lock to the specified transaction, enqueueing
   // request in lock table. Returns true if lock is immediately granted, else
@@ -45,7 +46,7 @@ class LockManager {
   //
   // Requires: Neither ReadLock nor WriteLock has previously been called with
   //           this txn and key.
-  virtual bool WriteLock(Txn* txn, const Key& key) = 0;
+  virtual bool WriteLock(Txn* txn, const Key& key);
 
   // Releases lock held by 'txn' on 'key', or cancels any pending request for
   // a lock on 'key' by 'txn'. If 'txn' held an EXCLUSIVE lock on 'key' (or was
@@ -59,12 +60,12 @@ class LockManager {
   // may need to track its lock acquisition progress during the lock request
   // process.
   // (Hint: Use 'LockManager::txn_waits_' defined below.)
-  virtual void Release(Txn* txn, const Key& key) = 0;
+  virtual void Release(Txn* txn, const Key& key);
 
   // Sets '*owners' to contain the txn IDs of all txns holding the lock, and
   // returns the current LockMode of the lock: UNLOCKED if it is not currently
   // held, SHARED or EXCLUSIVE if it is, depending on the current state.
-  virtual LockMode Status(const Key& key, vector<Txn*>* owners) = 0;
+  virtual LockMode Status(const Key& key, vector<Txn*>* owners);
 
  protected:
   // The LockManager's lock table tracks all lock requests. For a given key, if
@@ -118,9 +119,6 @@ class LockManagerA : public LockManager {
   inline virtual ~LockManagerA() {}
 
   virtual bool ReadLock(Txn* txn, const Key& key);
-  virtual bool WriteLock(Txn* txn, const Key& key);
-  virtual void Release(Txn* txn, const Key& key);
-  virtual LockMode Status(const Key& key, vector<Txn*>* owners);
 };
 
 // Version of the LockManager implementing both shared and exclusive locks.
@@ -130,9 +128,6 @@ class LockManagerB : public LockManager {
   inline virtual ~LockManagerB() {}
 
   virtual bool ReadLock(Txn* txn, const Key& key);
-  virtual bool WriteLock(Txn* txn, const Key& key);
-  virtual void Release(Txn* txn, const Key& key);
-  virtual LockMode Status(const Key& key, vector<Txn*>* owners);
 };
 
 #endif  // _LOCK_MANAGER_H_

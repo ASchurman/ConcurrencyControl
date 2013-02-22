@@ -83,7 +83,7 @@ TEST(LockManagerA_LocksReleasedOutOfOrder) {
   EXPECT_EQ(1, owners.size());
   EXPECT_EQ(t1, owners[0]);
 
-  // Txn 1 releases lock.  Txn 2 is granted read lock.
+  // Txn 1 releases lock.  Txn 3 is granted read lock.
   lm.Release(t1, 101);
   EXPECT_EQ(EXCLUSIVE, lm.Status(101, &owners));
   EXPECT_EQ(1, owners.size());
