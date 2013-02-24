@@ -155,16 +155,65 @@ void TxnProcessor::RunLockingScheduler() {
 }
 
 void TxnProcessor::RunOCCScheduler() {
-  // CPSC 438/538:
-  //
-  // Implement this method! Note that implementing OCC may require
-  // modifications to the Storage engine (and therefore to the 'ExecuteTxn'
-  // method below).
-  //
-  // [For now, run serial scheduler in order to make it through the test
-  // suite]
+  Txn* txn;
+  bool validResult;
 
-  RunSerialScheduler();
+  while (tp_.Active()) {
+    // Record the start time of the next incoming transaction request and run
+    // it in its own thread.
+    if (txn_requests_.Pop(&txn)) {
+      txn->occ_start_time_ = GetTime();
+      tp_.RunTask(new Method<TxnProcessor, void, Txn*>(
+            this,
+            &TxnProcessor::ExecuteTxn,
+            txn));
+    }
+
+    // Validate and commit/restart finished txns
+    while (completed_txns_.Pop(&txn)) {
+      if (txn->Status() == COMPLETED_C) {
+        // Make sure that nothing in txn's readset or writeset was updated
+        // after txn started
+        validResult = true;
+        for (set<Key>::iterator it = txn->readset_.begin();
+             validResult && it != txn->readset_.end(); it++) {
+          if (storage_.Timestamp(*it) > txn->occ_start_time_)
+            validResult = false;
+        }
+        for (set<Key>::iterator it = txn->writeset_.begin();
+             validResult && it != txn->writeset_.end(); it++) {
+          if (storage_.Timestamp(*it) > txn->occ_start_time_)
+            validResult = false;
+        }
+
+        // Commit txn if it passed validation; otherwise, restart it.
+        if (validResult) {
+          ApplyWrites(txn);
+          txn->status_ = COMMITTED;
+        } else {
+          txn->status_ = INCOMPLETE;
+          txn->reads_.clear();
+          txn->writes_.clear();
+          txn->occ_start_time_ = GetTime();
+          tp_.RunTask(new Method<TxnProcessor, void, Txn*>(
+                this,
+                &TxnProcessor::ExecuteTxn,
+                txn));
+        }
+      } else if (txn->Status() == COMPLETED_A) {
+        txn->status_ = ABORTED;
+        validResult = true;
+      } else {
+        // Invalid TxnStatus!
+        DIE("Completed Txn has invalid TxnStatus: " << txn->Status());
+        validResult = false;
+      }
+
+      // Only push the result to client if txn wasn't restarted.
+      if (validResult)
+        txn_results_.Push(txn);
+    }
+  }
 }
 
 void TxnProcessor::RunOCCParallelScheduler() {
