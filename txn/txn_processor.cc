@@ -4,14 +4,11 @@
 #include "txn/txn_processor.h"
 #include <stdio.h>
 
-#include <set>
-
 #include "txn/lock_manager.h"
 
-// Number of finished and validated transactions to deal with in each
-// pass through parallel OCC
+// Number of finished transactions to deal with in each pass through parallel
+// OCC
 #define N_FINISHED_TXNS (100)
-#define N_VALIDATED_TXNS (100)
 
 // Thread & queue counts for StaticThreadPool initialization.
 #define THREAD_COUNT 100
@@ -224,7 +221,7 @@ void TxnProcessor::RunOCCScheduler() {
 void TxnProcessor::RunOCCParallelScheduler() {
   Txn* txn;
 
-  while(tp_.Active()) {
+  while (tp_.Active()) {
     // Record the start time of the next incoming transaction request and run
     // it in its own thread.
       if (txn_requests_.Pop(&txn)) {
@@ -235,13 +232,12 @@ void TxnProcessor::RunOCCParallelScheduler() {
             txn));
     }
 
-    // Put N_FINISHED_TXNS completed txns into validation.
+    // Put at most N_FINISHED_TXNS completed txns into validation.
     for (int i = 0; i < N_FINISHED_TXNS; i++) {
       if (completed_txns_.Pop(&txn)) {
         if (txn->Status() == COMPLETED_C) {
           // Copy the active set, add txn to the active set, and start
           // validation in a new thread.
-          DCHECK(active_txns_.count(txn) == 0);
           txn->active_copy_ = active_txns_;
           active_txns_.insert(txn);
           tp_.RunTask(new Method<TxnProcessor, void, Txn*>(
@@ -256,38 +252,35 @@ void TxnProcessor::RunOCCParallelScheduler() {
           DIE("Completed Txn has invalid TxnStatus: " << txn->Status());
         }
       } else {
-        break; // completed_txns_ is empty
+        // completed_txns_ is empty
+        break;
       }
     }
 
-    // Commit/restart N_VALIDATED_TXNS transactions that have finished with
-    // ParallelValidateTxn
-    for (int i = 0; i < N_VALIDATED_TXNS; i++) {
-      if (validated_txns_.Pop(&txn)) {
-        DCHECK(active_txns_.count(txn) > 0);
-        active_txns_.erase(txn);
-        
-        if (txn->Status() == COMPLETED_C) {
-          // txn is valid! Mark it as committed and push the results to the
-          // client. (The writes were already applied in ParallelValidateTxn.)
-          txn->status_ = COMMITTED;
-          txn_results_.Push(txn);
-        } else if (txn->Status() == COMPLETED_A) {
-          // txn is invalid! Completely restart it.
-          txn->status_ = INCOMPLETE;
-          txn->reads_.clear();
-          txn->writes_.clear();
-          txn->active_copy_.clear();
-          txn->occ_start_time_ = GetTime();
-          tp_.RunTask(new Method<TxnProcessor, void, Txn*>(
-                this,
-                &TxnProcessor::ExecuteTxn,
-                txn));
-        } else {
-          DIE("Validated Txn has invalid TxnStatus: " << txn->Status());
-        }
+    // Commit/restart all transactions that have finished with
+    // ParallelValidateTxn. We want to clear txns out of the active set as soon
+    // as possible so that we don't have txns fail validation unnecessarily.
+    while (validated_txns_.Pop(&txn)) {
+      active_txns_.erase(txn);
+
+      if (txn->Status() == COMPLETED_C) {
+        // txn is valid! Mark it as committed and push the results to the
+        // client. (The writes were already applied in ParallelValidateTxn.)
+        txn->status_ = COMMITTED;
+        txn_results_.Push(txn);
+      } else if (txn->Status() == COMPLETED_A) {
+        // txn is invalid! Completely restart it.
+        txn->status_ = INCOMPLETE;
+        txn->reads_.clear();
+        txn->writes_.clear();
+        txn->active_copy_.clear();
+        txn->occ_start_time_ = GetTime();
+        tp_.RunTask(new Method<TxnProcessor, void, Txn*>(
+              this,
+              &TxnProcessor::ExecuteTxn,
+              txn));
       } else {
-        break; // validated_txns_ is empty
+        DIE("Validated Txn has invalid TxnStatus: " << txn->Status());
       }
     }
   }

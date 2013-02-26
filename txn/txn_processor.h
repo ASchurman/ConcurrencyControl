@@ -7,6 +7,7 @@
 #include <deque>
 #include <map>
 #include <string>
+#include <set>
 
 #include "txn/common.h"
 #include "txn/lock_manager.h"
@@ -19,6 +20,7 @@
 using std::deque;
 using std::map;
 using std::string;
+using std::set;
 
 // The TxnProcessor supports five different execution modes, corresponding to
 // the four parts of assignment 2, plus a simple serial (non-concurrent) mode.
