@@ -105,6 +105,10 @@ class Txn {
 
   // Start time (used for OCC and MVCC).
   double occ_start_time_;
+
+  // This transaction's copy of the set of currently validating transactions.
+  // Used only for parallel OCC.
+  set<Txn*> active_copy_;
 };
 
 #endif  // _TXN_H_

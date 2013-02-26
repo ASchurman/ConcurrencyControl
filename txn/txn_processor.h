@@ -71,6 +71,12 @@ class TxnProcessor {
   // transaction logic.
   void ExecuteTxn(Txn* txn);
 
+  // Performs the validation step of parallel OCC. Should be run in its own
+  // thread. Pushes txn into validated_txns_ upon completion. If txn is valid,
+  // its status in validated_txns_ is COMPLETED_C; if not, its status is
+  // COMPLETED_A.
+  void ParallelValidateTxn(Txn* txn);
+
   // Applies all writes performed by '*txn' to 'storage_'.
   //
   // Requires: txn->Status() is COMPLETED_C.
@@ -100,6 +106,15 @@ class TxnProcessor {
 
   // Queue of completed (but not yet committed/aborted) transactions.
   AtomicQueue<Txn*> completed_txns_;
+
+  // Active set of transactions currently in parallel validation.
+  // Need not be atomic, since only the main thread accesses the active set;
+  // transaction threads each have their own copy of the active set.
+  set<Txn*> active_txns_;
+
+  // Queue of validated (but not yet committed/restarted) transactions.
+  // Used only in parallel OCC.
+  AtomicQueue<Txn*> validated_txns_;
 
   // Queue of transaction results (already committed or aborted) to be returned
   // to client.

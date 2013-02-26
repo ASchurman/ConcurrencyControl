@@ -8,6 +8,11 @@
 
 #include "txn/lock_manager.h"
 
+// Number of finished and validated transactions to deal with in each
+// pass through parallel OCC
+#define N_FINISHED_TXNS (100)
+#define N_VALIDATED_TXNS (100)
+
 // Thread & queue counts for StaticThreadPool initialization.
 #define THREAD_COUNT 100
 #define QUEUE_COUNT 10
@@ -217,16 +222,113 @@ void TxnProcessor::RunOCCScheduler() {
 }
 
 void TxnProcessor::RunOCCParallelScheduler() {
-  // CPSC 438/538:
-  //
-  // Implement this method! Note that implementing OCC with parallel
-  // validation may require modifications to other files, most likely
-  // txn_processor.h and possibly others.
-  //
-  // [For now, run serial scheduler in order to make it through the test
-  // suite]
+  Txn* txn;
 
-  RunSerialScheduler();
+  while(tp_.Active()) {
+    // Record the start time of the next incoming transaction request and run
+    // it in its own thread.
+      if (txn_requests_.Pop(&txn)) {
+      txn->occ_start_time_ = GetTime();
+      tp_.RunTask(new Method<TxnProcessor, void, Txn*>(
+            this,
+            &TxnProcessor::ExecuteTxn,
+            txn));
+    }
+
+    // Put N_FINISHED_TXNS completed txns into validation.
+    for (int i = 0; i < N_FINISHED_TXNS; i++) {
+      if (completed_txns_.Pop(&txn)) {
+        if (txn->Status() == COMPLETED_C) {
+          // Copy the active set, add txn to the active set, and start
+          // validation in a new thread.
+          DCHECK(active_txns_.count(txn) == 0);
+          txn->active_copy_ = active_txns_;
+          active_txns_.insert(txn);
+          tp_.RunTask(new Method<TxnProcessor, void, Txn*>(
+                this,
+                &TxnProcessor::ParallelValidateTxn,
+                txn));
+        } else if (txn->Status() == COMPLETED_A) {
+          txn->status_ = ABORTED;
+          txn_results_.Push(txn);
+        } else {
+          // Invalid TxnStatus!
+          DIE("Completed Txn has invalid TxnStatus: " << txn->Status());
+        }
+      } else {
+        break; // completed_txns_ is empty
+      }
+    }
+
+    // Commit/restart N_VALIDATED_TXNS transactions that have finished with
+    // ParallelValidateTxn
+    for (int i = 0; i < N_VALIDATED_TXNS; i++) {
+      if (validated_txns_.Pop(&txn)) {
+        DCHECK(active_txns_.count(txn) > 0);
+        active_txns_.erase(txn);
+        
+        if (txn->Status() == COMPLETED_C) {
+          // txn is valid! Mark it as committed and push the results to the
+          // client. (The writes were already applied in ParallelValidateTxn.)
+          txn->status_ = COMMITTED;
+          txn_results_.Push(txn);
+        } else if (txn->Status() == COMPLETED_A) {
+          // txn is invalid! Completely restart it.
+          txn->status_ = INCOMPLETE;
+          txn->reads_.clear();
+          txn->writes_.clear();
+          txn->active_copy_.clear();
+          txn->occ_start_time_ = GetTime();
+          tp_.RunTask(new Method<TxnProcessor, void, Txn*>(
+                this,
+                &TxnProcessor::ExecuteTxn,
+                txn));
+        } else {
+          DIE("Validated Txn has invalid TxnStatus: " << txn->Status());
+        }
+      } else {
+        break; // validated_txns_ is empty
+      }
+    }
+  }
+}
+
+void TxnProcessor::ParallelValidateTxn(Txn* txn) {
+  bool valid = true;
+
+  // If any record in txn's read- or write-set was last updated after txn's
+  //   start time, txn is invalid.
+  // While iterating over the write-set, also check if the write-set intersects
+  //   with any read- or write-sets in our copy of the active set; if so, txn
+  //   is invalid.
+  for (set<Key>::iterator it = txn->readset_.begin();
+       valid && it != txn->readset_.end(); it++) {
+    if (storage_.Timestamp(*it) > txn->occ_start_time_)
+      valid = false;
+  }
+
+  for (set<Key>::iterator it = txn->writeset_.begin();
+       valid && it != txn->writeset_.end(); it++) {
+    if (storage_.Timestamp(*it) > txn->occ_start_time_) {
+      valid = false;
+    } else {
+      for (set<Txn*>::iterator t = txn->active_copy_.begin();
+           valid && t != txn->active_copy_.end(); t++) {
+        if ((*t)->writeset_.count(*it) > 0 || (*t)->readset_.count(*it) > 0)
+          valid = false;
+      }
+    }
+  }
+
+  // Apply the writes of valid transactions.
+  if (valid) {
+    ApplyWrites(txn);
+    txn->status_ = COMPLETED_C;
+  } else {
+    txn->status_ = COMPLETED_A;
+  }
+
+  validated_txns_.Push(txn);
 }
 
 void TxnProcessor::ExecuteTxn(Txn* txn) {
@@ -261,7 +363,4 @@ void TxnProcessor::ApplyWrites(Txn* txn) {
        it != txn->writes_.end(); ++it) {
     storage_.Write(it->first, it->second);
   }
-
-  // Set status to committed.
-  txn->status_ = COMMITTED;
 }

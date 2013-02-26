@@ -55,4 +55,5 @@ void Txn::CopyTxnInternals(Txn* txn) const {
   txn->status_ = this->status_;
   txn->unique_id_ = this->unique_id_;
   txn->occ_start_time_ = this->occ_start_time_;
+  txn->active_copy_ = this->active_copy_;
 }
